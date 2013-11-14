@@ -117,7 +117,7 @@ sub _setup_lwp {
 
     require LWP::UserAgent;
     $self->{agent} = LWP::UserAgent->new;
-    $self->env_proxy;
+    $self->{agent}->env_proxy;
 }
 
 sub _setup_tiny {
