@@ -198,12 +198,15 @@ sub _get_curl {
     my $fh = File::Temp->new;
     my $filename = $fh->filename;
 
-    my $res = `curl $uri -o $filename -s -w '%{http_code}:%{content_type}\n'`;
+    my $cmd = "curl $uri -o $filename -s -w '%{http_code}:%{content_type}\n'";
+
+    my( $success, $error_message, $full_buf, $stdout_buf, $stderr_buf ) =
+                run( command => $cmd, verbose => 0 );
 
     my $content = do { local $/; <$fh> };
-    return unless $content;
+    return unless $success;
 
-    my @headers = split( /:/, $res );
+    my @headers = split( /:/, $stdout_buf->[0] );
     my $status = $headers[0];
     my @ct = split( /;/, $headers[1] );
     my $content_type = $ct[0];
