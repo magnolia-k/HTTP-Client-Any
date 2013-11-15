@@ -71,15 +71,11 @@ sub _validate_client {
         croak "Invalid HTTP Client:$client.";
     }
 
-    if ( ! $env->{$client}{available} ) {
-        croak "$client isn't installed.";
-    }
+    croak "$client isn't installed." unless $env->{$client}{ok};
     
-    if ( $self->{https} ) {
-        if ( ! $env->{$client}{https_ok} ) {
-            croak "@{$HTTP_CLIENTS->{$client}{https}} is (are) required " .
-                "for https access.";
-        }
+    if ( $self->{https} and ( ! $env->{$client}{https} ) ) {
+        croak "@{$HTTP_CLIENTS->{$client}{https}} is (are) required " .
+            "for https access.";
     }
 
     my $method = '_setup_' . $HTTP_CLIENTS->{$client}{id};
@@ -90,21 +86,23 @@ sub _validate_client {
 sub _determine_client {
     my $self = shift;
 
-    if ( $env->{'Furl'}{available} and ( ! $self->{https} ) or $env->{'Furl'}{https_ok} ) {
+    my $nohttps = ( ! $self->{https} );
+
+    if ( $env->{'Furl'}{ok} and ( $nohttps or $env->{'Furl'}{https} ) ) {
 
         $self->{client} = 'Furl';
         $self->_setup_furl;
 
-    } elsif ( $env->{"LWP"} and ( ( ! $self->{https} ) or  $env->{'LWP'}{https_ok} ) ) {
+    } elsif ( $env->{"LWP"}{ok} and ( $nohttps or $env->{'LWP'}{https} ) ) {
 
         $self->{client} = 'LWP';
         $self->_setup_lwp;
 
-    } elsif ( $env->{'curl'} ) {
+    } elsif ( $env->{'curl'}{ok} ) {
 
         $self->{client} = 'curl';
 
-    } elsif ( $env->{'HTTP::Tiny'} and ( ( ! $self->{https} ) or $env->{'HTTP::Tiny'}{ssl} ) ) {
+    } elsif ( $env->{'HTTP::Tiny'}{ok} and ( $nohttps or $env->{'HTTP::Tiny'}{https} ) ) {
 
         $self->{client} = 'HTTP::Tiny';
         $self->_setup_tiny;
@@ -265,22 +263,21 @@ sub __check_env {
 
         if ( $HTTP_CLIENTS->{$client}{type} eq 'module' ) {
 
-            $env->{$client}{available} =
-                check_install( module => $HTTP_CLIENTS->{$client}{type} );
+            $env->{$client}{ok} =
+                check_install( module => $HTTP_CLIENTS->{$client}{module} );
 
-            if ( $HTTP_CLIENTS->{$client}{https} ) {
+            my $https_modules = $HTTP_CLIENTS->{$client}{https};
+            if ( $https_modules ) {
 
-                $env->{$client}{https_ok} = grep { 
-                        check_install( module => $_ )
-                    } @{ $HTTP_CLIENTS->{$client}{https} };
-                
+                if ( grep {check_install( module => $_ )} @{$https_modules} ) {
+                    $env->{$client}{httpsk}++;
+                }
+
             }
 
         } else {
-            $env->{$client}{available} =
-                can_run( $HTTP_CLIENTS->{$client}{command} );
-
-            $env->{$client}{https_ok}++;
+            $env->{$client}{ok} = can_run( $HTTP_CLIENTS->{$client}{command} );
+            $env->{$client}{httpsk}++;
         }
 
     }
