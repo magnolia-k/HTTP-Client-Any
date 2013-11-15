@@ -10,14 +10,37 @@ use IPC::Cmd qw/can_run run/;
 use File::Temp;
 use Carp;
 
-our %clients = (
-        'Furl'      =>  'furl',
-        'LWP'       =>  'lwp',
-        'curl'      =>  'curl',
-        'HTTP::Tiny'=>  'tiny',
-        );
+our $HTTP_CLIENTS = {
 
-our %env;
+    'Furl'      =>  {
+        id      => 'furl',
+        type    => 'module',
+        module  => 'Furl',
+        https   => [ 'IO::Socket::SSL' ],
+    },
+
+    'LWP'       =>  {
+        id      => 'lwp',
+        type    => 'module',
+        module  => 'LWP::UserAgent',
+        https   => [ 'LWP::Protocol::https', 'Mozilla::CA' ],
+    },
+
+    'curl'      =>  {
+        id      => 'curl',
+        type    => 'command',
+        command => 'curl',
+    },
+
+    'HTTP::Tiny'    => {
+        id      => 'tiny',
+        type    => 'module',
+        module  => 'HTTP::Tiny',
+        https   => [ 'IO::Socket::SSL' ],
+    },
+};
+
+our $env;
 
 __check_env();
 
@@ -44,58 +67,44 @@ sub _validate_client {
 
     my $client = $self->{client};
 
-    if ( ! grep { $_ eq $client } keys %clients ) {
+    if ( ! grep { $_ eq $client } keys %{ $HTTP_CLIENTS } ) {
         croak "Invalid HTTP Client:$client.";
     }
 
-    if ( $client eq 'Furl' ) {
-
-        if ( $self->{https} and ( ! $env{ssl} ) ) {
-            croak "IO::Socket::SSL is required for https access.";
-        }
-
-        $self->_setup_furl;
-
-    } elsif ( $client eq 'LWP' ) {
-
-        # Usually, Mozilla::CA is installed with LWP::Protocol::https,
-        # but Mac OS X don't.
-        if ( $self->{https} and ( ! ( $env{lwphttps} and $env{ca} ) ) ) {
-            croak "LWP::Protocol::https and Mozilla::CA are" . 
-                " required for https access.";
-        }
-
-        $self->_setup_lwp;
-
-    } elsif ( $client eq 'HTTP::Tiny' ) {
-
-        if ( $self->{https} and ( ! $env{ssl} ) ) {
-            croak "IO::Socket::SSL is required for https access.";
-        }
-
-        $self->_setup_tiny;
-
+    if ( ! $env->{$client}{available} ) {
+        croak "$client isn't installed.";
     }
+    
+    if ( $self->{https} ) {
+        if ( ! $env->{$client}{https_ok} ) {
+            croak "@{$HTTP_CLIENTS->{$client}{https}} is (are) required " .
+                "for https access.";
+        }
+    }
+
+    my $method = '_setup_' . $HTTP_CLIENTS->{$client}{id};
+
+    $self->$method;
 }
 
 sub _determine_client {
     my $self = shift;
 
-    if ( $env{furl} and ( ( ! $self->{https} ) or $env{ssl} ) ) {
+    if ( $env->{'Furl'}{available} and ( ! $self->{https} ) or $env->{'Furl'}{https_ok} ) {
 
         $self->{client} = 'Furl';
         $self->_setup_furl;
 
-    } elsif ( $env{lwp} and ( ( ! $self->{https} ) or ( $env{lwphttps} and $env{ca} ) ) ) {
+    } elsif ( $env->{"LWP"} and ( ( ! $self->{https} ) or  $env->{'LWP'}{https_ok} ) ) {
 
         $self->{client} = 'LWP';
         $self->_setup_lwp;
 
-    } elsif ( $env{curl} ) {
+    } elsif ( $env->{'curl'} ) {
 
         $self->{client} = 'curl';
 
-    } elsif ( $env{tiny} and ( ( ! $self->{https} ) or $env{ssl} ) ) {
+    } elsif ( $env->{'HTTP::Tiny'} and ( ( ! $self->{https} ) or $env->{'HTTP::Tiny'}{ssl} ) ) {
 
         $self->{client} = 'HTTP::Tiny';
         $self->_setup_tiny;
@@ -120,6 +129,10 @@ sub _setup_lwp {
     $self->{agent}->env_proxy;
 }
 
+sub _setup_curl {
+    # do nothing now.
+}
+
 sub _setup_tiny {
     my $self = shift;
 
@@ -132,7 +145,7 @@ sub get {
 
     $self->_validate_uri( $uri );
 
-    my $method = '_get_' . $clients{$self->{client}};
+    my $method = '_get_' . $HTTP_CLIENTS->{$self->{client}}{id};
 
     return $self->$method( $uri );
 }
@@ -248,29 +261,28 @@ sub _get_tiny {
 
 sub __check_env {
 
-    my %modules = (
-            'furl'      =>  'Furl',
-            'lwp'       =>  'LWP::UserAgent',
-            'tiny'      =>  'HTTP::Tiny',
+    for my $client ( keys %{ $HTTP_CLIENTS } ) {
 
-            'ssl'       =>  'IO::Socket::SSL',
-            'lwphttps'  =>  'LWP::Protocol::https',
-            'ca'        =>  'Mozilla::CA',
-            );
+        if ( $HTTP_CLIENTS->{$client}{type} eq 'module' ) {
 
-    my %cmds = (
-            'curl'  =>  'curl',
-            'wget'  =>  'wget',
-            );
+            $env->{$client}{available} =
+                check_install( module => $HTTP_CLIENTS->{$client}{type} );
 
-    # check installed modules.
-    for my $module ( keys %modules ) {
-        $env{$module} = check_install( module => $modules{$module} );
-    }
+            if ( $HTTP_CLIENTS->{$client}{https} ) {
 
-    # check installed commands.
-    for my $cmd ( keys %cmds ) {
-        $env{$cmd} = can_run( $cmds{$cmd} );
+                $env->{$client}{https_ok} = grep { 
+                        check_install( module => $_ )
+                    } @{ $HTTP_CLIENTS->{$client}{https} };
+                
+            }
+
+        } else {
+            $env->{$client}{available} =
+                can_run( $HTTP_CLIENTS->{$client}{command} );
+
+            $env->{$client}{https_ok}++;
+        }
+
     }
 
 }
