@@ -17,6 +17,12 @@ our $HTTP_CLIENTS = {
         type    => 'module',
         module  => 'Furl',
         https   => [ 'IO::Socket::SSL' ],
+        setup   => sub {
+            require Furl;
+            my $agent = Furl->new;
+
+            return $agent;
+        },
     },
 
     'LWP'       =>  {
@@ -24,12 +30,20 @@ our $HTTP_CLIENTS = {
         type    => 'module',
         module  => 'LWP::UserAgent',
         https   => [ 'LWP::Protocol::https', 'Mozilla::CA' ],
+        setup   => sub {
+            require LWP::UserAgent;
+            my $agent = LWP::UserAgent->new;
+            $agent->env_proxy;
+
+            return $agent;
+        },
     },
 
     'curl'      =>  {
         id      => 'curl',
         type    => 'command',
         command => 'curl',
+        setup   => undef,
     },
 
     'HTTP::Tiny'    => {
@@ -37,6 +51,12 @@ our $HTTP_CLIENTS = {
         type    => 'module',
         module  => 'HTTP::Tiny',
         https   => [ 'IO::Socket::SSL' ],
+        setup   => sub {
+            require HTTP::Tiny;
+            my $agent = HTTP::Tiny->new;
+
+            return $agent;
+        },
     },
 };
 
@@ -59,6 +79,10 @@ sub new {
 
     $self->{client} ? $self->_validate_client : $self->_determine_client;
 
+    if ( exists $HTTP_CLIENTS->{$self->{client}}{setup} ) {
+        $self->{agent} = $HTTP_CLIENTS->{$self->{client}}{setup}->();
+    }
+
     return $self;
 }
 
@@ -78,64 +102,28 @@ sub _validate_client {
             "for https access.";
     }
 
-    my $method = '_setup_' . $HTTP_CLIENTS->{$client}{id};
-
-    $self->$method;
+    return $self;
 }
 
 sub _determine_client {
     my $self = shift;
 
-    my $nohttps = ( ! $self->{https} );
+    my @order = qw/Furl LWP curl HTTP::Tiny/;
 
-    if ( $env->{'Furl'}{ok} and ( $nohttps or $env->{'Furl'}{https} ) ) {
+    for my $client ( @order ) {
 
-        $self->{client} = 'Furl';
-        $self->_setup_furl;
+        next unless $env->{$client}{ok};
 
-    } elsif ( $env->{"LWP"}{ok} and ( $nohttps or $env->{'LWP'}{https} ) ) {
+        if ( $self->{https} ) {
+            next unless $env->{$client}{https};
+        }
 
-        $self->{client} = 'LWP';
-        $self->_setup_lwp;
+        $self->{client} = $client;
 
-    } elsif ( $env->{'curl'}{ok} ) {
-
-        $self->{client} = 'curl';
-
-    } elsif ( $env->{'HTTP::Tiny'}{ok} and ( $nohttps or $env->{'HTTP::Tiny'}{https} ) ) {
-
-        $self->{client} = 'HTTP::Tiny';
-        $self->_setup_tiny;
-
-    } else {
-        croak "Can't determine HTTP client.";
+        return $self;
     }
-}
 
-sub _setup_furl {
-    my $self = shift;
-
-    require Furl;
-    $self->{agent} = Furl->new;
-}
-
-sub _setup_lwp {
-    my $self = shift;
-
-    require LWP::UserAgent;
-    $self->{agent} = LWP::UserAgent->new;
-    $self->{agent}->env_proxy;
-}
-
-sub _setup_curl {
-    # do nothing now.
-}
-
-sub _setup_tiny {
-    my $self = shift;
-
-    require HTTP::Tiny;
-    $self->{agent} = HTTP::Tiny->new;
+    croak "Can't determine HTTP client.";
 }
 
 sub get {
@@ -262,26 +250,97 @@ sub __check_env {
     for my $client ( keys %{ $HTTP_CLIENTS } ) {
 
         if ( $HTTP_CLIENTS->{$client}{type} eq 'module' ) {
-
-            $env->{$client}{ok} =
-                check_install( module => $HTTP_CLIENTS->{$client}{module} );
-
-            my $https_modules = $HTTP_CLIENTS->{$client}{https};
-            if ( $https_modules ) {
-
-                if ( grep {check_install( module => $_ )} @{$https_modules} ) {
-                    $env->{$client}{httpsk}++;
-                }
-
-            }
-
-        } else {
-            $env->{$client}{ok} = can_run( $HTTP_CLIENTS->{$client}{command} );
-            $env->{$client}{httpsk}++;
+            __check_module( $client );
+        } elsif ( $HTTP_CLIENTS->{$client}{type} eq 'command' ) {
+            __check_command( $client );
         }
 
     }
+}
 
+sub __check_module {
+    my $client = shift;
+
+    if ( check_install( module => $HTTP_CLIENTS->{$client}{module} ) ) {
+        $env->{$client}{ok}++;
+
+        my $https_modules = $HTTP_CLIENTS->{$client}{https};
+        if ( $https_modules ) {
+
+            if ( grep { check_install( module => $_ ) } @{ $https_modules } ) {
+                $env->{$client}{https}++;
+            }
+
+        }
+    }
+}
+
+sub __check_command {
+    my $client = shift;
+
+    if ( can_run( $HTTP_CLIENTS->{$client}{command} ) ) {
+        $env->{$client}{ok}++;
+        $env->{$client}{https}++;
+    };
+}
+
+sub client {
+    my $self = shift;
+
+    return $self->{client};
+}
+
+sub is_https_ok {
+    my $self = shift;
+
+    my $client = $self->{client};
+
+    return $env->{$client}{https};
+}
+
+sub available {
+    my $pkg = shift;
+
+    my $param = {
+        client  =>  undef,
+        https   =>  undef,
+        @,
+    };
+
+    my $client = $param->{client};
+
+    if ( $client ) {
+
+        if ( ! grep { $_ eq $client } keys %{ $HTTP_CLIENTS } ) {
+            croak "Invalid HTTP Client:$client.";
+        }
+
+        if ( $param->{https} ) {
+            return ( $env->{$client}{https} ) ? $client : undef;
+        } else {
+            return $client;
+        }
+
+    } else {
+
+        my @clients;
+
+        for my $client ( keys %{ $HTTP_CLIENTS } ) {
+
+            if ( $param->{https} ) {
+                
+                if ( $env->{$client}{https} ) {
+                    push @clients, $client;
+                }
+
+            } else {
+                push @clients, $client;
+            }
+
+        }
+
+        return @clients;
+    }
 }
 
 package HTTP::Client::Any::Response;
