@@ -3,6 +3,9 @@
 use strict;
 use warnings;
 
+use File::Temp;
+use File::Spec;
+
 use Test::More;
 
 require HTTP::Client::Any;
@@ -23,5 +26,22 @@ if ( HTTP::Client::Any->available( client => 'curl', https => 1 ) ) {
 
     like( $https_res->content, qr/GitHub/ ) if $https_res->is_success;
 }
+
+
+my $filename = '01mailrc.txt.gz';
+my $uri = 'http://www.cpan.org/CPAN/authors/' . $filename;
+my $dir = File::Temp->newdir;
+
+my $path = File::Spec->catfile( $dir, $filename );
+
+my $mirror = HTTP::Client::Any->new( client => 'curl' );
+my $mirror_res = $mirror->mirror( $uri, $filename );
+
+ok( -e $filename );
+
+my $mirror_retry = $mirror->mirror( $uri, $filename );
+
+is( $mirror_retry->status_code, '302' );
+
 
 done_testing();
