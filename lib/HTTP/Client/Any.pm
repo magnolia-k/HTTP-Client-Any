@@ -79,7 +79,7 @@ sub new {
 
     $self->{client} ? $self->_validate_client : $self->_determine_client;
 
-    if ( exists $HTTP_CLIENTS->{$self->{client}}{setup} ) {
+    if ( $HTTP_CLIENTS->{$self->{client}}{setup} ) {
         $self->{agent} = $HTTP_CLIENTS->{$self->{client}}{setup}->();
     }
 
@@ -97,9 +97,11 @@ sub _validate_client {
 
     croak "$client isn't installed." unless $env->{$client}{ok};
     
-    if ( $self->{https} and ( ! $env->{$client}{https} ) ) {
-        croak "@{$HTTP_CLIENTS->{$client}{https}} is (are) required " .
-            "for https access.";
+    if ( $self->{https} ) {
+        if ( ! $env->{$client}{https} ) {
+            croak "@{$HTTP_CLIENTS->{$client}{https}} is (are) required " .
+                "for https access.";
+        }
     }
 
     return $self;
@@ -267,8 +269,12 @@ sub __check_module {
         my $https_modules = $HTTP_CLIENTS->{$client}{https};
         if ( $https_modules ) {
 
-            if ( grep { check_install( module => $_ ) } @{ $https_modules } ) {
-                $env->{$client}{https}++;
+            $env->{$client}{https}++;
+            for my $https_module ( @{ $https_modules } )  {
+
+                if ( ! check_install( module => $https_module ) ) {
+                    $env->{$client}{https} = undef;
+                }
             }
 
         }
@@ -304,7 +310,7 @@ sub available {
     my $param = {
         client  =>  undef,
         https   =>  undef,
-        @,
+        @_,
     };
 
     my $client = $param->{client};
