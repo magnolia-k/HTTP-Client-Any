@@ -24,4 +24,21 @@ if ( HTTP::Client::Any->available( client => 'LWP', https => 1 ) ) {
     like( $https_res->content, qr/GitHub/ ) if $https_res->is_success;
 }
 
+my $filename = '01mailrc.txt.gz';
+my $uri = 'http://www.cpan.org/CPAN/authors/' . $filename;
+my $dir = File::Temp->newdir;
+
+my $path = File::Spec->catfile( $dir, $filename );
+
+my $mirror = HTTP::Client::Any->new( client => 'LWP' );
+my $mirror_res = $mirror->mirror( $uri, $filename );
+
+ok( -e $filename );
+
+my $mirror_retry = $mirror->mirror( $uri, $filename );
+
+is( $mirror_retry->status_code, '304' );
+
+
+
 done_testing();

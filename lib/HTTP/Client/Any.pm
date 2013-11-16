@@ -9,6 +9,10 @@ use Module::Load::Conditional qw/check_install/;
 use IPC::Cmd qw/can_run run/;
 use File::Temp;
 use Carp;
+use Time::Piece;
+use autodie;
+use File::Copy;
+use File::Basename;
 
 our $HTTP_CLIENTS = {
 
@@ -185,7 +189,7 @@ sub _get_lwp {
 
     return HTTP::Client::Any::Response->new(
             client          =>  'LWP',
-            status_code     =>  sub { $res->status       },
+            status_code     =>  sub { $res->code         },
             is_success      =>  sub { $res->is_success   },
             content_type    =>  sub { $res->content_type if $res->is_success },
             content         =>  sub { $res->content      if $res->is_success },
@@ -246,6 +250,135 @@ sub _get_tiny {
             response        =>  $res,
             );
 }
+
+sub mirror {
+    my ( $self, $uri, $filename ) = @_;
+
+    $self->_validate_uri( $uri );
+    $self->_validate_filename( $filename );
+
+    my $method = '_mirror_' . $HTTP_CLIENTS->{$self->{client}}{id};
+
+    return $self->$method( $uri, $filename );
+}
+
+sub _validate_filename {
+    my ( $self, $filename ) = @_;
+
+    if ( ! $filename ) {
+        croak "Filename isn't set.";
+    }
+
+    return $self;
+}
+
+sub _mirror_furl {
+    my ( $self, $uri, $filename ) = @_;
+
+    # this code is dirty hack now...
+    my $dir  = File::Temp->newdir;
+    my $file = basename( $filename );
+    my $path = File::Spec->catfile( $dir, $file );
+
+    my $res = $self->{agent}->get( $uri );
+
+    return unless $res;
+
+    open my $fh, '>', $filename;
+    print $fh $res->content;
+    close $fh;
+
+    return HTTP::Client::Any::Response->new(
+            client          =>  'Furl',
+            status_code     =>  sub { $res->code         },
+            is_success      =>  sub { $res->is_success   },
+            content_type    =>  undef,
+            content         =>  undef,
+            response        =>  $res,
+            );
+}
+
+sub _mirror_lwp {
+    my ( $self, $uri, $filename ) = @_;
+
+    my $res = $self->{agent}->mirror( $uri, $filename );
+    
+    return unless $res;
+
+    return HTTP::Client::Any::Response->new(
+            client          =>  'LWP',
+            status_code     =>  sub { $res->code         },
+            is_success      =>  sub { $res->is_success   },
+            content_type    =>  undef,
+            content         =>  undef,
+            response        =>  $res,
+            );
+
+}
+
+sub _mirror_curl {
+    my ( $self, $uri, $filename ) = @_;
+
+    my $date_string;
+    if ( -e $filename ) {
+        $date_string = gmtime( (stat( $filename ))[9] );
+    }
+
+    my $fh = File::Temp->new;
+    my $tempfile = $fh->filename;
+
+    my $cmd = "curl $uri -o $tempfile -s -w '%{http_code}:%{content_type}\n'";
+
+    if ( $date_string ) {
+        $cmd .= " --header 'If-Modified-Since: " . $date_string->strftime . "'";
+    }
+
+    my( $success, $error_message, $full_buf, $stdout_buf, $stderr_buf ) =
+                run( command => $cmd, verbose => 0 );
+
+    return unless $success;
+
+    my @headers = split( /:/, $stdout_buf->[0] );
+    my $status = $headers[0];
+    my @ct = split( /;/, $headers[1] );
+    my $content_type = $ct[0];
+
+    my $is_success = substr( $status, 0, 1 ) eq '2';
+
+    if ( $is_success ) {
+        unlink $filename;
+        copy( $tempfile, $filename );
+    }
+
+    return HTTP::Client::Any::Response->new(
+            client          =>  'curl',
+            status_code     =>  sub { $status                        },
+            is_success      =>  sub { $is_success                    },
+            content_type    =>  undef,
+            content         =>  undef,
+            response        =>  undef,
+            );
+
+}
+
+sub _mirror_tiny {
+    my ( $self, $uri, $filename ) = @_;
+
+    my $res = $self->{agent}->mirror( $uri, $filename );
+    
+    return unless $res;
+
+    return HTTP::Client::Any::Response->new(
+            client          =>  'HTTP::Tiny',
+            status_code     =>  sub { $res->{status}                   },
+            is_success      =>  sub { $res->{success}                  },
+            content_type    =>  undef,
+            content         =>  undef,
+            response        =>  $res,
+            );
+
+}
+
 
 sub __check_env {
 
