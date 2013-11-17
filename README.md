@@ -22,6 +22,22 @@ HTTP::Client::Any - Generic HTTP client interface
         print $res_https->content;
     }
 
+    # mirror method
+    my $mirror = HTTP::Client::Any->new;
+    my $uri = 'http://www.cpan.org/src/5.0/perl-5.18.1.tar.gz';
+    my $res_mirror = $mirror->mirror( $uri, 'perl-5.18.1.tar.gz' );
+
+    if ( $res_mirror->is_success ) {
+        ....
+    }
+
 # DESCRIPTION
 
 HTTP::Client::Any is generic HTTP client interface module.
+
+The priority of the client to be used is as follows. 
+
+Furl -> LWP -> curl -> HTTP::Client
+
+The client installed is chosen automatically. 
+
