@@ -35,13 +35,15 @@ my $dir = File::Temp->newdir;
 my $path = File::Spec->catfile( $dir, $filename );
 
 my $mirror = HTTP::Client::Any->new( client => 'curl' );
-my $mirror_res = $mirror->mirror( $uri, $filename );
+my $mirror_res = $mirror->mirror( $uri, $path );
 
-ok( -e $filename );
+ok( -e $path );
 
-my $mirror_retry = $mirror->mirror( $uri, $filename );
 
-is( $mirror_retry->status_code, '302' );
+# curl don't return 304....
+my $mirror_retry = $mirror->mirror( $uri, $path );
+
+is( $mirror_retry->status_code, '304' );
 
 
 done_testing();
