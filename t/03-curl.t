@@ -39,8 +39,6 @@ my $mirror_res = $mirror->mirror( $uri, $path );
 
 ok( -e $path );
 
-
-# curl don't return 304....
 my $mirror_retry = $mirror->mirror( $uri, $path );
 
 is( $mirror_retry->status_code, '304' );
