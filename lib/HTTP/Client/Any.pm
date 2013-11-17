@@ -21,8 +21,8 @@ our $HTTP_CLIENTS = {
         module  => 'Furl',
         https   => [ 'IO::Socket::SSL' ],
         setup   => sub {
-            require Furl;
-            my $agent = Furl->new;
+            require Furl::HTTP;
+            my $agent = Furl::HTTP->new( timeout => 600 );
             $agent->env_proxy;
 
             return $agent;
@@ -159,24 +159,30 @@ sub _validate_uri {
 sub _get_furl {
     my ( $self, $uri ) = @_;
 
-    my $res = $self->{agent}->get( $uri );
+    my ( $minor_version, $code, $msg, $headers, $body ) = $self->{agent}->request(
+            method      => 'GET',
+            url         => $uri,
+            );
 
-    return unless $res;
+    return unless $code;
 
+    my $headers_ref = { @{ $headers } };
+
+    my $is_success = substr( $code, 0, 1 ) eq '2';
     my $content_type;
-    if ( $res->is_success ) {
-        my @ct = split( /;/, $res->content_type );
+    if ( $is_success ) {
+        my @ct = split( /;/, $headers_ref->{'content-type'} );
 
         $content_type = $ct[0];
     } 
 
     return HTTP::Client::Any::Response->new(
             client          =>  'Furl',
-            status_code     =>  sub { $res->status     },
-            is_success      =>  sub { $res->is_success },
-            content_type    =>  sub { $content_type if $res->is_success },
-            content         =>  sub { $res->content if $res->is_success },
-            response        =>  $res,
+            status_code     =>  sub { $code       },
+            is_success      =>  sub { $is_success },
+            content_type    =>  sub { $content_type if $is_success },
+            content         =>  sub { $body         if $is_success },
+            response        =>  undef,
             );
 }
 
@@ -275,37 +281,40 @@ sub _validate_filename {
 sub _mirror_furl {
     my ( $self, $uri, $filename ) = @_;
 
-    # this code is dirty hack now...
-    my $headers;
+    my $request_headers;
     if ( -e $filename ) {
         my $date_string = gmtime( (stat( $filename ))[9] );
 
-        $headers = [ 'If-Modified-Since' => $date_string ];
+        $request_headers = [ 'If-Modified-Since' => $date_string ];
     }
 
-    my $res = $self->{agent}->get( $uri, $headers );
+    my $temp = File::Temp->new;
 
-    return unless $res;
+    my ( $minor_version, $code, $msg, $headers, $body ) = $self->{agent}->request(
+            method      => 'GET',
+            url         => $uri,
+            headers     => $request_headers,
+            write_file  => $temp,
+            );
 
-    my $is_success = $res->is_success;
+    return unless $code;
+
+    my $is_success = substr( $code, 0, 1 ) eq '2';
 
     if ( $is_success ) {
-        my $temp = File::Temp->new;
-        print $temp $res->content;
-
         unlink $filename if ( -e $filename );
         copy( $temp, $filename );
     }
 
-    $is_success ||= $res->code eq '304';
+    $is_success ||= $code eq '304';
 
     return HTTP::Client::Any::Response->new(
             client          =>  'Furl',
-            status_code     =>  sub { $res->code  },
+            status_code     =>  sub { $code       },
             is_success      =>  sub { $is_success },
             content_type    =>  undef,
             content         =>  undef,
-            response        =>  $res,
+            response        =>  undef,
             );
 }
 
