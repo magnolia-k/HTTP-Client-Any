@@ -288,30 +288,27 @@ sub _mirror_furl {
         $headers = [ 'If-Modified-Since' => $date_string ];
     }
 
-    my $res;
-    if ( $headers ) {
-        $res = $self->{agent}->get( $uri, $headers );
-    } else {
-        $res = $self->{agent}->get( $uri );
-    }
+    my $res = $self->{agent}->get( $uri, $headers );
 
     return unless $res;
 
-    if ( $res->is_success ) {
+    my $is_success = substr( $res->code, 0, 1 ) eq '2';
 
-        open my $fh, '>', $path;
-        print $fh $res->content;
-        close $fh;
+    if ( $is_success ) {
+        my $temp = File::Temp->new;
+        print $temp $res->content;
 
         unlink $filename if ( -e $filename );
 
-        copy( $path, $filename );
+        copy( $temp, $filename );
     }
+
+    $is_success ||= $res->code eq '304';
 
     return HTTP::Client::Any::Response->new(
             client          =>  'Furl',
-            status_code     =>  sub { $res->code         },
-            is_success      =>  sub { $res->is_success   },
+            status_code     =>  sub { $res->code  },
+            is_success      =>  sub { $is_success },
             content_type    =>  undef,
             content         =>  undef,
             response        =>  $res,
@@ -354,16 +351,16 @@ sub _mirror_curl {
 
     return unless $success;
 
-    my $status = substr( $stdout_buf->[0], 0, 3 );
-
+    my $status     = substr( $stdout_buf->[0], 0, 3 );
     my $is_success = substr( $status, 0, 1 ) eq '2';
 
-    $is_success ||= $status eq '304';
 
     if ( $is_success ) {
         unlink $filename if ( -e $filename );
         copy( $tempfile, $filename );
     }
+
+    $is_success ||= $status eq '304';
 
     return HTTP::Client::Any::Response->new(
             client          =>  'curl',
