@@ -9,7 +9,6 @@ use Module::Load::Conditional qw/check_install/;
 use IPC::Cmd qw/can_run run/;
 use File::Temp;
 use Carp;
-use Time::Piece;
 use autodie;
 use File::Copy;
 use File::Basename;
@@ -24,6 +23,7 @@ our $HTTP_CLIENTS = {
         setup   => sub {
             require Furl;
             my $agent = Furl->new;
+            $agent->env_proxy;
 
             return $agent;
         },
@@ -203,7 +203,7 @@ sub _get_curl {
     my $fh = File::Temp->new;
     my $filename = $fh->filename;
 
-    my $cmd = "curl $uri -o $filename -s -w '%{http_code}:%{content_type}\n'";
+    my $cmd = "curl $uri -o $filename -L -s -w '%{http_code}:%{content_type}\n'";
 
     my( $success, $error_message, $full_buf, $stdout_buf, $stderr_buf ) =
                 run( command => $cmd, verbose => 0 );
@@ -280,13 +280,31 @@ sub _mirror_furl {
     my $file = basename( $filename );
     my $path = File::Spec->catfile( $dir, $file );
 
-    my $res = $self->{agent}->get( $uri );
+    my $headers;
+    if ( -e $filename ) {
+        my $date_string = gmtime( (stat( $filename ))[9] );
+
+        $headers = [ 'If-Modified-Since' => $date_string->strftime ];
+    }
+
+    my $res;
+    if ( $headers ) {
+        $res = $self->{agent}->get( $uri, $headers );
+    } else {
+        $res = $self->{agent}->get( $uri );
+    }
 
     return unless $res;
 
-    open my $fh, '>', $filename;
-    print $fh $res->content;
-    close $fh;
+    if ( $res->is_success ) {
+        unlink $filename if ( -e $filename );
+
+        open my $fh, '>', $path;
+        print $fh $res->content;
+        close $fh;
+
+        copy( $path, $filename );
+    }
 
     return HTTP::Client::Any::Response->new(
             client          =>  'Furl',
@@ -319,18 +337,14 @@ sub _mirror_lwp {
 sub _mirror_curl {
     my ( $self, $uri, $filename ) = @_;
 
-    my $date_string;
-    if ( -e $filename ) {
-        $date_string = gmtime( (stat( $filename ))[9] );
-    }
-
     my $fh = File::Temp->new;
     my $tempfile = $fh->filename;
 
-    my $cmd = "curl $uri -o $tempfile -s -w '%{http_code}:%{content_type}\n'";
+    my $cmd = "curl $uri -o $tempfile -L -s -w '%{http_code}\n'";
 
-    if ( $date_string ) {
-        $cmd .= " --header 'If-Modified-Since: " . $date_string->strftime . "'";
+    if ( -e $filename ) {
+        my $date_string = gmtime( (stat( $filename ))[9] );
+        $cmd .= " --header 'If-Modified-Since: " . $date_string . "'";
     }
 
     my( $success, $error_message, $full_buf, $stdout_buf, $stderr_buf ) =
@@ -338,27 +352,25 @@ sub _mirror_curl {
 
     return unless $success;
 
-    my @headers = split( /:/, $stdout_buf->[0] );
-    my $status = $headers[0];
-    my @ct = split( /;/, $headers[1] );
-    my $content_type = $ct[0];
+    my $status = substr( $stdout_buf->[0], 0, 3 );
 
     my $is_success = substr( $status, 0, 1 ) eq '2';
 
+    $is_success ||= $status eq '304';
+
     if ( $is_success ) {
-        unlink $filename;
+        unlink $filename if ( -e $filename );
         copy( $tempfile, $filename );
     }
 
     return HTTP::Client::Any::Response->new(
             client          =>  'curl',
-            status_code     =>  sub { $status                        },
-            is_success      =>  sub { $is_success                    },
+            status_code     =>  sub { $status     },
+            is_success      =>  sub { $is_success },
             content_type    =>  undef,
             content         =>  undef,
             response        =>  undef,
             );
-
 }
 
 sub _mirror_tiny {
@@ -370,8 +382,8 @@ sub _mirror_tiny {
 
     return HTTP::Client::Any::Response->new(
             client          =>  'HTTP::Tiny',
-            status_code     =>  sub { $res->{status}                   },
-            is_success      =>  sub { $res->{success}                  },
+            status_code     =>  sub { $res->{status}  },
+            is_success      =>  sub { $res->{success} },
             content_type    =>  undef,
             content         =>  undef,
             response        =>  $res,
