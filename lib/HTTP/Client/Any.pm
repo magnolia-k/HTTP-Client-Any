@@ -278,13 +278,14 @@ sub _mirror_furl {
     # this code is dirty hack now...
     my $dir  = File::Temp->newdir;
     my $file = basename( $filename );
+
     my $path = File::Spec->catfile( $dir, $file );
 
     my $headers;
     if ( -e $filename ) {
         my $date_string = gmtime( (stat( $filename ))[9] );
 
-        $headers = [ 'If-Modified-Since' => $date_string->strftime ];
+        $headers = [ 'If-Modified-Since' => $date_string ];
     }
 
     my $res;
@@ -297,11 +298,12 @@ sub _mirror_furl {
     return unless $res;
 
     if ( $res->is_success ) {
-        unlink $filename if ( -e $filename );
 
         open my $fh, '>', $path;
         print $fh $res->content;
         close $fh;
+
+        unlink $filename if ( -e $filename );
 
         copy( $path, $filename );
     }

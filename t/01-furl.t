@@ -35,8 +35,8 @@ my $mirror_res = $mirror->mirror( $uri, $path );
 
 ok( -e $path );
 
-#my $mirror_retry = $mirror->mirror( $uri, $filename );
+my $mirror_retry = $mirror->mirror( $uri, $path );
 
-#is( $mirror_retry->status_code, '304' );
+is( $mirror_retry->status_code, '304' );
 
 done_testing();
